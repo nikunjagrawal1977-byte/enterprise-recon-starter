@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import SQLModel, Session, select
 from .db import engine, get_session
-from . import models, crud, auth, schemas
+from . import models, crud, auth, schemas, ledger
 from .seed import create_initial_data
 import os
 
@@ -20,11 +20,20 @@ app.add_middleware(
 
 API_PREFIX = "/api/v1"
 
+
 @app.on_event("startup")
 def on_startup():
-    SQLModel.metadata.create_all(engine)
+    # Ensure models exist for local/dev; migrations are preferred for prod
+    try:
+        SQLModel.metadata.create_all(engine)
+    except Exception:
+        # ignore if DB not ready; migrations should be used in prod
+        pass
     # seed admin user and sample exceptions if not present
-    create_initial_data()
+    try:
+        create_initial_data()
+    except Exception:
+        pass
 
 
 @app.post(API_PREFIX + "/auth/login")
@@ -34,6 +43,45 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         raise HTTPException(status_code=400, detail="Incorrect username or password")
     access_token = auth.create_access_token(subject=user.username, role=user.role)
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.post(API_PREFIX + "/transactions")
+def ingest_transaction(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+    """Ingest a canonical payment transaction (any channel) and create ledger postings."""
+    try:
+        res = ledger.create_payment_transaction(payload)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post(API_PREFIX + "/bank_lines")
+def ingest_bank_line(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+    """Ingest a bank statement line and create settlement journal."""
+    try:
+        res = ledger.create_bank_statement_line(payload)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post(API_PREFIX + "/reconciliation/reconcile")
+def reconcile(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+    """Attempt to reconcile a payment transaction to a bank statement line."""
+    try:
+        res = ledger.reconcile_transaction(payload)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get(API_PREFIX + "/ledger/trial_balance")
+def trial_balance(current_user: models.User = Depends(auth.get_current_user)):
+    try:
+        res = ledger.get_trial_balance()
+        return {"ok": True, "trial_balance": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get(API_PREFIX + "/reconciliation/exceptions")
