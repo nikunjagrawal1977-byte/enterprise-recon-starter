@@ -2,8 +2,10 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
+from sqlmodel import Session, select
 import os
-from .db import get_session
+
+from .db import engine
 from .models import User
 
 SECRET_KEY = os.environ.get("JWT_SECRET") or "dev_secret_change_me"
@@ -37,8 +39,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    # Load user from DB
-    with get_session() as session:
+    with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username)).first()
         if not user:
             raise HTTPException(status_code=401, detail="User not found")

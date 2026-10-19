@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
+
 class MatchCandidate(BaseModel):
     bank_settlement_id: Optional[str]
     gateway_txn_id: Optional[str]
@@ -14,6 +15,7 @@ class MatchCandidate(BaseModel):
     class Config:
         orm_mode = True
 
+
 class AuditEntry(BaseModel):
     actor: str
     action: str
@@ -22,6 +24,7 @@ class AuditEntry(BaseModel):
 
     class Config:
         orm_mode = True
+
 
 class ExceptionSummary(BaseModel):
     id: str
@@ -36,10 +39,12 @@ class ExceptionSummary(BaseModel):
     class Config:
         orm_mode = True
 
+
 class ExceptionDetail(ExceptionSummary):
     transaction: Optional[dict] = None
     candidates: List[MatchCandidate] = []
     audit: List[AuditEntry] = []
+
 
 class ManualMatchRequest(BaseModel):
     transaction_id: Optional[str]
