@@ -1,36 +1,24 @@
-[alembic]
-script_location = alembic
-prepend_sys_path = .
-sqlalchemy.url = postgresql://recon_user:change_me@localhost:5432/recon
+"""${message}
 
-[loggers]
-keys = root,sqlalchemy,alembic
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+Create Date: ${create_date}
+"""
 
-[handlers]
-keys = console
+from alembic import op
+import sqlalchemy as sa
+${imports if imports else ""}
 
-[formatters]
-keys = generic
+# revision identifiers, used by Alembic.
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
 
-[logger_root]
-level = WARN
-handlers = console
 
-[logger_sqlalchemy]
-level = WARN
-handlers =
-qualname = sqlalchemy.engine
+def upgrade():
+    ${upgrades if upgrades else "pass"}
 
-[logger_alembic]
-level = INFO
-handlers =
-qualname = alembic
 
-[handler_console]
-class = StreamHandler
-args = (sys.stderr,)
-level = NOTSET
-formatter = generic
-
-[formatter_generic]
-format = %(levelname)-5.5s [%(name)s] %(message)s
+def downgrade():
+    ${downgrades if downgrades else "pass"}
