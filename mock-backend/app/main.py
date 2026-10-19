@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import SQLModel, Session, select
 from .db import engine, get_session
-from . import models, crud, auth, schemas, ledger
+from . import models, crud, auth, schemas, ledger, reconcile
 from .seed import create_initial_data
 import os
 
@@ -66,7 +66,7 @@ def ingest_bank_line(payload: dict, current_user: models.User = Depends(auth.get
 
 
 @app.post(API_PREFIX + "/reconciliation/reconcile")
-def reconcile(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+def reconcile_endpoint(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
     """Attempt to reconcile a payment transaction to a bank statement line."""
     try:
         res = ledger.reconcile_transaction(payload)
@@ -130,3 +130,76 @@ def summary(current_user: models.User = Depends(auth.get_current_user)):
             "auto_match_rate": 0.72,
             "stale": open_count,
         }
+
+
+# --- New reconciliation endpoints ---
+
+@app.get(API_PREFIX + "/reconciliation/candidates/{txn_id}")
+def get_candidates(txn_id: str, current_user: models.User = Depends(auth.get_current_user)):
+    """Return candidate bank lines for a transaction and persist them for review."""
+    with Session(engine) as session:
+        txn = session.exec(select(models.PaymentTransaction).where(models.PaymentTransaction.id == txn_id)).first()
+        if not txn:
+            txn = session.exec(select(models.PaymentTransaction).where(models.PaymentTransaction.source_txn_id == txn_id)).first()
+        if not txn:
+            raise HTTPException(status_code=404, detail="transaction not found")
+        candidates = reconcile.generate_candidates_for_txn(txn, session)
+        # persist candidates into Candidate table for UI review
+        from .models import Candidate
+        persisted = []
+        for c in candidates:
+            # check if candidate already exists
+            existing = session.exec(select(Candidate).where(Candidate.gateway_txn_id == txn.source_txn_id).where(Candidate.bank_settlement_id == c['bank_statement_line_id'])).first()
+            if existing:
+                persisted.append({"id": existing.id, "score": c['score']})
+                continue
+            cand = Candidate(id=str(uuid4()), exception_id=None, bank_settlement_id=c['bank_statement_line_id'], gateway_txn_id=txn.source_txn_id, amount=c['amount'], payment_ts=None, payment_method=txn.payment_method, bank_ref=txn.bank_ref, match_score=c['score'])
+            session.add(cand)
+            session.commit()
+            session.refresh(cand)
+            persisted.append({"id": cand.id, "score": c['score']})
+        return {"txn_id": txn.id, "candidates": candidates, "persisted": persisted}
+
+
+@app.post(API_PREFIX + "/reconciliation/auto-run")
+def auto_run(current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role not in ("reviewer", "admin"):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    stats = reconcile.run_auto_reconcile()
+    return {"ok": True, "stats": stats}
+
+
+@app.post(API_PREFIX + "/reconciliation/force-match")
+def force_match(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role not in ("reviewer", "admin"):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    payment_id = payload.get("payment_transaction_id")
+    bank_id = payload.get("bank_statement_line_id")
+    actor = current_user.username
+    try:
+        res = reconcile.force_match(payment_id, bank_id, actor=actor)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post(API_PREFIX + "/reconciliation/reject")
+def reject_candidate(payload: dict, current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role not in ("reviewer", "admin"):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    payment_id = payload.get("payment_transaction_id")
+    bank_id = payload.get("bank_statement_line_id")
+    actor = current_user.username
+    try:
+        res = reconcile.reject_candidate(payment_id, bank_id, actor=actor)
+        return {"ok": True, "result": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get(API_PREFIX + "/reconciliation/unmatched")
+def unmatched(current_user: models.User = Depends(auth.get_current_user), limit: int = 100, offset: int = 0):
+    if current_user.role not in ("reviewer", "admin"):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    res = reconcile.list_unmatched_payments(limit=limit, offset=offset)
+    return {"ok": True, "unmatched": res}
