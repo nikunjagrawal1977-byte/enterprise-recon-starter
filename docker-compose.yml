@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  mock-backend:
+    build:
+      context: ./mock-backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./enterprise-recon-ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://mock-backend:8000/api/v1
+    depends_on:
+      - mock-backend
+    restart: unless-stopped
